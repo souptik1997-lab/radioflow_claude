@@ -1,0 +1,288 @@
+// vite.config.js
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import path from 'path'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 5173,
+    strictPort: false,
+    open: true
+  },
+  build: {
+    outDir: 'dist',
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom', 'axios']
+        }
+      }
+    }
+  },
+  define: {
+    'process.env': {}
+  }
+})
+
+---
+
+# .gitignore
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# Testing
+/coverage
+
+# Production
+/build
+/dist
+
+# Misc
+.DS_Store
+.env
+.env.local
+.env.*.local
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor directories
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Database
+*.sql
+!schema.sql
+
+# Exports
+/exports
+
+# OS
+Thumbs.db
+.AppleDouble
+.LSOverride
+
+---
+
+# .env.example
+# Server Configuration
+PORT=5000
+NODE_ENV=development
+
+# Database
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=radflow
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_SSL=false
+
+# JWT
+JWT_SECRET=your-super-secret-jwt-key-change-in-production
+
+# Frontend URL (for password reset links, CORS)
+FRONTEND_URL=http://localhost:5173
+
+# Email Configuration
+EMAIL_SERVICE=gmail
+EMAIL_USER=your-email@gmail.com
+EMAIL_PASS=your-app-password
+
+# Optional: Firebase Cloud Messaging for push notifications
+FCM_SERVER_KEY=your-fcm-server-key
+
+# Logging
+LOG_LEVEL=debug
+
+---
+
+# jest.config.js
+export default {
+  testEnvironment: 'node',
+  collectCoverageFrom: [
+    'src/**/*.{js,jsx}',
+    '!src/index.js',
+  ],
+  coverageThreshold: {
+    global: {
+      branches: 50,
+      functions: 50,
+      lines: 50,
+      statements: 50
+    }
+  }
+}
+
+---
+
+# .eslintrc.json
+{
+  "env": {
+    "browser": true,
+    "es2021": true,
+    "node": true
+  },
+  "extends": [
+    "eslint:recommended",
+    "plugin:react/recommended"
+  ],
+  "parserOptions": {
+    "ecmaFeatures": {
+      "jsx": true
+    },
+    "ecmaVersion": 12,
+    "sourceType": "module"
+  },
+  "rules": {
+    "react/react-in-jsx-scope": "off",
+    "no-unused-vars": ["warn"],
+    "no-console": ["warn", { "allow": ["warn", "error"] }]
+  }
+}
+
+---
+
+# nginx.conf
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log /var/log/nginx/access.log main;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    client_max_body_size 10M;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml text/javascript 
+               application/json application/javascript application/xml+rss;
+
+    server {
+        listen 80 default_server;
+        server_name _;
+
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # Frontend routing
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        # Backend API proxy
+        location /api {
+            proxy_pass http://backend:5000;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_cache_bypass $http_upgrade;
+            proxy_request_buffering off;
+        }
+
+        # Static assets caching
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)$ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+
+        # Error pages
+        error_page 404 /index.html;
+        error_page 500 502 503 504 /50x.html;
+    }
+}
+
+---
+
+# Makefile
+.PHONY: help build dev test clean deploy
+
+help:
+	@echo "RadFlow - Development Commands"
+	@echo "make dev          - Start development environment"
+	@echo "make build        - Build production image"
+	@echo "make test         - Run tests"
+	@echo "make clean        - Clean up containers and volumes"
+	@echo "make deploy       - Deploy to production"
+
+dev:
+	docker-compose up -d
+	docker-compose logs -f
+
+build:
+	docker-compose build
+
+test:
+	docker-compose exec backend npm test
+	docker-compose exec frontend npm test
+
+clean:
+	docker-compose down -v
+
+logs:
+	docker-compose logs -f
+
+db-reset:
+	docker-compose exec postgres dropdb -U postgres radflow
+	docker-compose exec postgres createdb -U postgres radflow
+	docker-compose exec postgres psql -U postgres radflow < schema.sql
+
+db-backup:
+	docker-compose exec postgres pg_dump -U postgres radflow > backup_$(shell date +%Y%m%d_%H%M%S).sql
+
+deploy:
+	docker-compose -f docker-compose.prod.yml up -d
+
+---
+
+# systemd service file (for non-Docker deployment)
+# /etc/systemd/system/radflow.service
+
+[Unit]
+Description=RadFlow Backend Service
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=radflow
+WorkingDirectory=/opt/radflow/backend
+ExecStart=/usr/bin/node /opt/radflow/backend/server.js
+Restart=always
+RestartSec=10
+
+Environment="NODE_ENV=production"
+Environment="DB_HOST=localhost"
+EnvironmentFile=/opt/radflow/backend/.env
+
+[Install]
+WantedBy=multi-user.target
